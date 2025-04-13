@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"database/sql"
 	"flag"
 	"fmt"
@@ -126,13 +127,16 @@ func createDatabase(path string) error {
 }
 
 func runMenu(db *sql.DB) {
+	reader := bufio.NewReader(os.Stdin)
+
 	for {
 		fmt.Println("\nSelect an option:")
 		fmt.Println("1. List companies")
 		fmt.Println("2. List roles with company name")
 		fmt.Println("3. List interviews with role and company")
 		fmt.Println("4. List contacts with company")
-		fmt.Println("5. Exit")
+		fmt.Println("5. Run custom SQL query")
+		fmt.Println("6. Exit")
 		fmt.Print("> ")
 
 		var choice int
@@ -145,7 +149,7 @@ func runMenu(db *sql.DB) {
 			`)
 		case 2:
 			queryAndPrintTable(db, `
-				SELECT r.roleID, r.name, r.status, r.postedRangeMin, r.postedRangeMax, c.name AS companyName
+				SELECT r.roleID, r.name, r.description, r.status, r.postedRangeMin, r.postedRangeMax, c.name AS companyName
 				FROM Roles r
 				JOIN Companies c ON r.companyID = c.companyID
 				ORDER BY r.roleID
@@ -168,6 +172,20 @@ func runMenu(db *sql.DB) {
 				ORDER BY con.contactID
 			`)
 		case 5:
+			fmt.Print("Enter SQL query:\n> ")
+			sqlQuery, _ := reader.ReadString('\n')
+			sqlQuery = strings.TrimSpace(sqlQuery)
+			if strings.HasPrefix(strings.ToLower(sqlQuery), "select") {
+				queryAndPrintTable(db, sqlQuery)
+			} else {
+				_, err := db.Exec(sqlQuery)
+				if err != nil {
+					fmt.Println("Execution error:", err)
+				} else {
+					fmt.Println("Query executed.")
+				}
+			}
+		case 6:
 			fmt.Println("Exiting.")
 			return
 		default:
@@ -190,22 +208,18 @@ func queryAndPrintTable(db *sql.DB, query string) {
 		return
 	}
 
-	// Print header
 	fmt.Println()
 	fmt.Println(strings.Join(cols, " | "))
 	fmt.Println(strings.Repeat("-", len(strings.Join(cols, " | "))))
 
-	// Prepare slice for values
 	vals := make([]interface{}, len(cols))
 	valPtrs := make([]interface{}, len(cols))
-
 	for i := range vals {
 		valPtrs[i] = &vals[i]
 	}
 
 	for rows.Next() {
-		err := rows.Scan(valPtrs...)
-		if err != nil {
+		if err := rows.Scan(valPtrs...); err != nil {
 			log.Printf("Row scan failed: %v\n", err)
 			continue
 		}
