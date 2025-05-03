@@ -79,11 +79,11 @@ func main() {
 	defer db.Close()
 	db.Exec("PRAGMA foreign_keys = ON;")
 
-	http.HandleFunc("/companies", handleCompanies)
-	http.HandleFunc("/roles", handleRoles)
-	http.HandleFunc("/interviews", handleInterviews)
-	http.HandleFunc("/contacts", handleContacts)
-	http.HandleFunc("/interviews_contacts", handleInterviewsContacts)
+	http.HandleFunc("/json/companies", handleCompanies)
+	http.HandleFunc("/json/roles", handleRoles)
+	http.HandleFunc("/json/interviews", handleInterviews)
+	http.HandleFunc("/json/contacts", handleContacts)
+	http.HandleFunc("/json/interviews_contacts", handleInterviewsContacts)
 
 	log.Println("Listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
