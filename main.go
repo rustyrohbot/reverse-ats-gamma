@@ -1,237 +1,242 @@
 package main
 
 import (
-	"bufio"
 	"database/sql"
-	"flag"
-	"fmt"
+	"encoding/json"
 	"log"
-	"os"
-	"path/filepath"
-	"strings"
+	"net/http"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
+type Company struct {
+	CompanyID   int            `json:"companyID"`
+	Name        sql.NullString `json:"name"`
+	Description sql.NullString `json:"description"`
+	Url         sql.NullString `json:"url"`
+	HqCity      sql.NullString `json:"hqCity"`
+	HqState     sql.NullString `json:"hqState"`
+}
+
+type Role struct {
+	RoleID              int            `json:"roleID"`
+	CompanyID           int            `json:"companyID"`
+	Name                sql.NullString `json:"name"`
+	Url                 sql.NullString `json:"url"`
+	Description         sql.NullString `json:"description"`
+	CoverLetter         sql.NullString `json:"coverLetter"`
+	ApplicationLocation sql.NullString `json:"applicationLocation"`
+	AppliedDate         sql.NullString `json:"appliedDate"`
+	ClosedDate          sql.NullString `json:"closedDate"`
+	PostedRangeMin      sql.NullInt64  `json:"postedRangeMin"`
+	PostedRangeMax      sql.NullInt64  `json:"postedRangeMax"`
+	Equity              sql.NullBool   `json:"equity"`
+	WorkCity            sql.NullString `json:"workCity"`
+	WorkState           sql.NullString `json:"workState"`
+	Location            sql.NullString `json:"location"`
+	Status              sql.NullString `json:"status"`
+	Discovery           sql.NullString `json:"discovery"`
+	Referral            sql.NullBool   `json:"referral"`
+	Notes               sql.NullString `json:"notes"`
+}
+
+type Interview struct {
+	InterviewID int            `json:"interviewID"`
+	RoleID      int            `json:"roleID"`
+	Date        sql.NullString `json:"date"`
+	Start       sql.NullString `json:"start"`
+	End         sql.NullString `json:"end"`
+	Notes       sql.NullString `json:"notes"`
+	Type        sql.NullString `json:"type"`
+}
+
+type Contact struct {
+	ContactID int            `json:"contactID"`
+	CompanyID int            `json:"companyID"`
+	FirstName sql.NullString `json:"firstName"`
+	LastName  sql.NullString `json:"lastName"`
+	Role      sql.NullString `json:"role"`
+	Email     sql.NullString `json:"email"`
+	Phone     sql.NullString `json:"phone"`
+	Linkedin  sql.NullString `json:"linkedin"`
+	Notes     sql.NullString `json:"notes"`
+}
+
+type InterviewsContacts struct {
+	InterviewsContactId int `json:"interviewsContactId"`
+	InterviewId         int `json:"interviewId"`
+	ContactId           int `json:"contactId"`
+}
+
+var db *sql.DB
+
 func main() {
-	createFlag := flag.String("create", "", "Create a new SQLite database with the given name")
-	flag.Parse()
-
-	if *createFlag != "" {
-		if err := createDatabase(*createFlag); err != nil {
-			log.Fatalf("Failed to create database: %v", err)
-		}
-		fmt.Printf("Database created at %s\n", *createFlag)
-		return
-	}
-
-	if len(flag.Args()) != 1 {
-		fmt.Println("Usage:")
-		fmt.Println("  go run main.go -create <databasename>")
-		fmt.Println("  go run main.go path/to/db")
-		return
-	}
-
-	dbPath := flag.Arg(0)
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		log.Fatalf("Database file not found: %s", dbPath)
-	}
-
-	db, err := sql.Open("sqlite3", dbPath)
+	var err error
+	db, err = sql.Open("sqlite3", "./database.sqlite")
 	if err != nil {
-		log.Fatalf("Failed to open database: %v", err)
+		log.Fatal(err)
 	}
 	defer db.Close()
+	db.Exec("PRAGMA foreign_keys = ON;")
 
-	runMenu(db)
+	http.HandleFunc("/companies", handleCompanies)
+	http.HandleFunc("/roles", handleRoles)
+	http.HandleFunc("/interviews", handleInterviews)
+	http.HandleFunc("/contacts", handleContacts)
+	http.HandleFunc("/interviews_contacts", handleInterviewsContacts)
+
+	log.Println("Listening on :8080")
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
-func createDatabase(path string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
-		return err
-	}
-	db, err := sql.Open("sqlite3", path)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	schema := []string{
-		`CREATE TABLE IF NOT EXISTS Companies (
-			companyID INTEGER PRIMARY KEY,
-			name TEXT NOT NULL,
-			description TEXT,
-			url TEXT,
-			hqCity TEXT,
-			hqState TEXT
-		);`,
-		`CREATE TABLE IF NOT EXISTS Roles (
-			roleID INTEGER PRIMARY KEY,
-			companyID INTEGER NOT NULL,
-			name TEXT NOT NULL,
-			url TEXT,
-			description TEXT,
-			coverLetter TEXT,
-			applied TEXT,
-			appliedDate TEXT,
-			postedRangeMin INTEGER,
-			postedRangeMax INTEGER,
-			equity BOOLEAN,
-			workCity TEXT,
-			workState TEXT,
-			location TEXT,
-			status TEXT,
-			discovery TEXT,
-			referral BOOLEAN,
-			notes TEXT,
-			FOREIGN KEY (companyID) REFERENCES Companies(companyID)
-		);`,
-		`CREATE TABLE IF NOT EXISTS Interviews (
-			interviewID INTEGER PRIMARY KEY,
-			roleID INTEGER NOT NULL,
-			date TEXT,
-			start TEXT,
-			end TEXT,
-			notes TEXT,
-			type TEXT,
-			FOREIGN KEY (roleID) REFERENCES Roles(roleID)
-		);`,
-		`CREATE TABLE IF NOT EXISTS Contacts (
-			contactID INTEGER PRIMARY KEY,
-			companyID INTEGER NOT NULL,
-			firstName TEXT,
-			lastName TEXT,
-			role TEXT,
-			email TEXT,
-			phone TEXT,
-			linkedin TEXT,
-			notes TEXT,
-			FOREIGN KEY (companyID) REFERENCES Companies(companyID)
-		);`,
-		`CREATE TABLE IF NOT EXISTS InterviewsContacts (
-			interviewContactId INTEGER PRIMARY KEY,
-			interviewId INTEGER NOT NULL,
-			contactId INTEGER NOT NULL,
-			FOREIGN KEY (interviewId) REFERENCES Interviews(interviewID),
-			FOREIGN KEY (contactId) REFERENCES Contacts(contactID)
-		);`,
-	}
-
-	for _, stmt := range schema {
-		if _, err := db.Exec(stmt); err != nil {
-			return err
+func handleCompanies(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		rows, _ := db.Query("SELECT * FROM Companies")
+		var list []Company
+		for rows.Next() {
+			var x Company
+			rows.Scan(&x.CompanyID, &x.Name, &x.Description, &x.Url, &x.HqCity, &x.HqState)
+			list = append(list, x)
 		}
-	}
-	return nil
-}
-
-func runMenu(db *sql.DB) {
-	reader := bufio.NewReader(os.Stdin)
-
-	for {
-		fmt.Println("\nSelect an option:")
-		fmt.Println("1. List companies")
-		fmt.Println("2. List roles with company name")
-		fmt.Println("3. List interviews with role and company")
-		fmt.Println("4. List contacts with company")
-		fmt.Println("5. Run custom SQL query")
-		fmt.Println("6. Exit")
-		fmt.Print("> ")
-
-		var choice int
-		fmt.Scan(&choice)
-
-		switch choice {
-		case 1:
-			queryAndPrintTable(db, `
-				SELECT companyID, name, description, url, hqCity, hqState FROM Companies
-			`)
-		case 2:
-			queryAndPrintTable(db, `
-				SELECT r.roleID, r.name, r.description, r.status, r.postedRangeMin, r.postedRangeMax, c.name AS companyName
-				FROM Roles r
-				JOIN Companies c ON r.companyID = c.companyID
-				ORDER BY r.roleID
-			`)
-		case 3:
-			queryAndPrintTable(db, `
-				SELECT i.interviewID, i.date, i.start, i.end, i.notes, i.type,
-					   r.name AS roleName, c.name AS companyName
-				FROM Interviews i
-				JOIN Roles r ON i.roleID = r.roleID
-				JOIN Companies c ON r.companyID = c.companyID
-				ORDER BY i.interviewID
-			`)
-		case 4:
-			queryAndPrintTable(db, `
-				SELECT con.contactID, con.firstName, con.lastName, con.role, con.email, con.phone,
-					   con.linkedin, con.notes, c.name AS companyName
-				FROM Contacts con
-				JOIN Companies c ON con.companyID = c.companyID
-				ORDER BY con.contactID
-			`)
-		case 5:
-			fmt.Print("Enter SQL query:\n> ")
-			sqlQuery, _ := reader.ReadString('\n')
-			sqlQuery = strings.TrimSpace(sqlQuery)
-			if strings.HasPrefix(strings.ToLower(sqlQuery), "select") {
-				queryAndPrintTable(db, sqlQuery)
-			} else {
-				_, err := db.Exec(sqlQuery)
-				if err != nil {
-					fmt.Println("Execution error:", err)
-				} else {
-					fmt.Println("Query executed.")
-				}
-			}
-		case 6:
-			fmt.Println("Exiting.")
-			return
-		default:
-			fmt.Println("Invalid choice")
-		}
+		json.NewEncoder(w).Encode(list)
+	case http.MethodPost:
+		var x Company
+		json.NewDecoder(r.Body).Decode(&x)
+		res, _ := db.Exec("INSERT INTO Companies (name, description, url, hqCity, hqState) VALUES (?, ?, ?, ?, ?)", x.Name, x.Description, x.Url, x.HqCity, x.HqState)
+		id, _ := res.LastInsertId()
+		x.CompanyID = int(id)
+		json.NewEncoder(w).Encode(x)
+	case http.MethodPut:
+		var x Company
+		json.NewDecoder(r.Body).Decode(&x)
+		db.Exec("UPDATE Companies SET name=?, description=?, url=?, hqCity=?, hqState=? WHERE companyID=?", x.Name, x.Description, x.Url, x.HqCity, x.HqState, x.CompanyID)
+		json.NewEncoder(w).Encode(x)
+	case http.MethodDelete:
+		id := r.URL.Query().Get("id")
+		db.Exec("DELETE FROM Companies WHERE companyID=?", id)
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
-func queryAndPrintTable(db *sql.DB, query string) {
-	rows, err := db.Query(query)
-	if err != nil {
-		log.Printf("Query failed: %v\n", err)
-		return
-	}
-	defer rows.Close()
-
-	cols, err := rows.Columns()
-	if err != nil {
-		log.Printf("Failed to get columns: %v\n", err)
-		return
-	}
-
-	fmt.Println()
-	fmt.Println(strings.Join(cols, " | "))
-	fmt.Println(strings.Repeat("-", len(strings.Join(cols, " | "))))
-
-	vals := make([]interface{}, len(cols))
-	valPtrs := make([]interface{}, len(cols))
-	for i := range vals {
-		valPtrs[i] = &vals[i]
-	}
-
-	for rows.Next() {
-		if err := rows.Scan(valPtrs...); err != nil {
-			log.Printf("Row scan failed: %v\n", err)
-			continue
+func handleRoles(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		rows, _ := db.Query("SELECT * FROM Roles")
+		var list []Role
+		for rows.Next() {
+			var x Role
+			rows.Scan(&x.RoleID, &x.CompanyID, &x.Name, &x.Url, &x.Description, &x.CoverLetter, &x.ApplicationLocation, &x.AppliedDate, &x.ClosedDate, &x.PostedRangeMin, &x.PostedRangeMax, &x.Equity, &x.WorkCity, &x.WorkState, &x.Location, &x.Status, &x.Discovery, &x.Referral, &x.Notes)
+			list = append(list, x)
 		}
+		json.NewEncoder(w).Encode(list)
+	case http.MethodPost:
+		var x Role
+		json.NewDecoder(r.Body).Decode(&x)
+		res, _ := db.Exec(`INSERT INTO Roles (companyID, name, url, description, coverLetter, applicationLocation, appliedDate, closedDate, postedRangeMin, postedRangeMax, equity, workCity, workState, location, status, discovery, referral, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			x.CompanyID, x.Name, x.Url, x.Description, x.CoverLetter, x.ApplicationLocation, x.AppliedDate, x.ClosedDate, x.PostedRangeMin, x.PostedRangeMax, x.Equity, x.WorkCity, x.WorkState, x.Location, x.Status, x.Discovery, x.Referral, x.Notes)
+		id, _ := res.LastInsertId()
+		x.RoleID = int(id)
+		json.NewEncoder(w).Encode(x)
+	case http.MethodPut:
+		var x Role
+		json.NewDecoder(r.Body).Decode(&x)
+		db.Exec(`UPDATE Roles SET companyID=?, name=?, url=?, description=?, coverLetter=?, applicationLocation=?, appliedDate=?, closedDate=?, postedRangeMin=?, postedRangeMax=?, equity=?, workCity=?, workState=?, location=?, status=?, discovery=?, referral=?, notes=? WHERE roleID=?`,
+			x.CompanyID, x.Name, x.Url, x.Description, x.CoverLetter, x.ApplicationLocation, x.AppliedDate, x.ClosedDate, x.PostedRangeMin, x.PostedRangeMax, x.Equity, x.WorkCity, x.WorkState, x.Location, x.Status, x.Discovery, x.Referral, x.Notes, x.RoleID)
+		json.NewEncoder(w).Encode(x)
+	case http.MethodDelete:
+		id := r.URL.Query().Get("id")
+		db.Exec("DELETE FROM Roles WHERE roleID=?", id)
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
 
-		strRow := make([]string, len(cols))
-		for i, val := range vals {
-			if val == nil {
-				strRow[i] = "NULL"
-			} else {
-				strRow[i] = fmt.Sprintf("%v", val)
-			}
+func handleInterviews(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		rows, _ := db.Query("SELECT * FROM Interviews")
+		var list []Interview
+		for rows.Next() {
+			var x Interview
+			rows.Scan(&x.InterviewID, &x.RoleID, &x.Date, &x.Start, &x.End, &x.Notes, &x.Type)
+			list = append(list, x)
 		}
-		fmt.Println(strings.Join(strRow, " | "))
+		json.NewEncoder(w).Encode(list)
+	case http.MethodPost:
+		var x Interview
+		json.NewDecoder(r.Body).Decode(&x)
+		res, _ := db.Exec("INSERT INTO Interviews (roleID, date, start, end, notes, type) VALUES (?, ?, ?, ?, ?, ?)", x.RoleID, x.Date, x.Start, x.End, x.Notes, x.Type)
+		id, _ := res.LastInsertId()
+		x.InterviewID = int(id)
+		json.NewEncoder(w).Encode(x)
+	case http.MethodPut:
+		var x Interview
+		json.NewDecoder(r.Body).Decode(&x)
+		db.Exec("UPDATE Interviews SET roleID=?, date=?, start=?, end=?, notes=?, type=? WHERE interviewID=?", x.RoleID, x.Date, x.Start, x.End, x.Notes, x.Type, x.InterviewID)
+		json.NewEncoder(w).Encode(x)
+	case http.MethodDelete:
+		id := r.URL.Query().Get("id")
+		db.Exec("DELETE FROM Interviews WHERE interviewID=?", id)
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func handleContacts(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		rows, _ := db.Query("SELECT * FROM Contacts")
+		var list []Contact
+		for rows.Next() {
+			var x Contact
+			rows.Scan(&x.ContactID, &x.CompanyID, &x.FirstName, &x.LastName, &x.Role, &x.Email, &x.Phone, &x.Linkedin, &x.Notes)
+			list = append(list, x)
+		}
+		json.NewEncoder(w).Encode(list)
+	case http.MethodPost:
+		var x Contact
+		json.NewDecoder(r.Body).Decode(&x)
+		res, _ := db.Exec("INSERT INTO Contacts (companyID, firstName, lastName, role, email, phone, linkedin, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", x.CompanyID, x.FirstName, x.LastName, x.Role, x.Email, x.Phone, x.Linkedin, x.Notes)
+		id, _ := res.LastInsertId()
+		x.ContactID = int(id)
+		json.NewEncoder(w).Encode(x)
+	case http.MethodPut:
+		var x Contact
+		json.NewDecoder(r.Body).Decode(&x)
+		db.Exec("UPDATE Contacts SET companyID=?, firstName=?, lastName=?, role=?, email=?, phone=?, linkedin=?, notes=? WHERE contactID=?", x.CompanyID, x.FirstName, x.LastName, x.Role, x.Email, x.Phone, x.Linkedin, x.Notes, x.ContactID)
+		json.NewEncoder(w).Encode(x)
+	case http.MethodDelete:
+		id := r.URL.Query().Get("id")
+		db.Exec("DELETE FROM Contacts WHERE contactID=?", id)
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func handleInterviewsContacts(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		rows, _ := db.Query("SELECT * FROM InterviewsContacts")
+		var list []InterviewsContacts
+		for rows.Next() {
+			var x InterviewsContacts
+			rows.Scan(&x.InterviewsContactId, &x.InterviewId, &x.ContactId)
+			list = append(list, x)
+		}
+		json.NewEncoder(w).Encode(list)
+	case http.MethodPost:
+		var x InterviewsContacts
+		json.NewDecoder(r.Body).Decode(&x)
+		res, _ := db.Exec("INSERT INTO InterviewsContacts (interviewId, contactId) VALUES (?, ?)", x.InterviewId, x.ContactId)
+		id, _ := res.LastInsertId()
+		x.InterviewsContactId = int(id)
+		json.NewEncoder(w).Encode(x)
+	case http.MethodPut:
+		var x InterviewsContacts
+		json.NewDecoder(r.Body).Decode(&x)
+		db.Exec("UPDATE InterviewsContacts SET interviewId=?, contactId=? WHERE interviewsContactId=?", x.InterviewId, x.ContactId, x.InterviewsContactId)
+		json.NewEncoder(w).Encode(x)
+	case http.MethodDelete:
+		id := r.URL.Query().Get("id")
+		db.Exec("DELETE FROM InterviewsContacts WHERE interviewsContactId=?", id)
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
